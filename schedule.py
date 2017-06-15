@@ -9,17 +9,41 @@ import re
 from collections import namedtuple
 from time import sleep
 #Data -----------------------------------------------------------------
-months_long = ["january","february", 'march','march','april','april','may','june','july',\
- 'august','september','october','november','december']
+months_long = ["january",
+               "february",
+              'march',
+              'march',
+              'april',
+              'april',
+              'may',
+              'june',
+              'july',
+              'august',
+              'september',
+              'october',
+              'november',
+              'december']
 
-months_short = ["jan","feb", 'mar','march', 'april','april','may','june','july',\
-'aug','sept','oct','nov','dec']
+months_short = ["jan",
+                "feb",
+                'mar',
+                'march',
+                'april',
+                'april',
+                'may',
+                'june',
+                'july',
+                'aug',
+                'sept',
+                'oct',
+                'nov',
+                'dec']
 
 short_to_long = dict(zip(months_short,months_long))
 
 
-months_to_num = dict(zip(months_long,[1,2,3,3,4,4,5,6,7,8,9,10,11,12]))
-num_to_months = dict(zip([1,2,3,3,4,4,5,6,7,8,9,10,11,12],months_long))
+months_to_num = dict(zip(months_long,range(1,13)))
+num_to_months = dict(zip(range(1,13),months_long))
 
 days_map={
     "mon":"monday",
@@ -44,13 +68,13 @@ day_to_num= {
 }
 
 num_to_day = {
-    0:  "monday",
-    1: "tuesday",
-    2:  "wednesday",
-    3:  "thursday",
-    4: "friday",
-    5: "saturday",
-    6: "sunday"
+    0:  "Monday",
+    1: "Tuesday",
+    2:  "Wednesday",
+    3:  "Thursday",
+    4: "Friday",
+    5: "Saturday",
+    6: "Sunday"
 }
 
 
@@ -61,6 +85,12 @@ class Scheduler:
     Eg.
     1. object availability for a specific date
     2. object preference for a specific day within the periond
+
+
+    Inputs
+    ------
+    st_period:  The date for the start of a new cycle
+    periods:     How many days in  the cycle
     """
     _daysofweek= {
     0: "monday",
@@ -75,8 +105,8 @@ class Scheduler:
 
     def __init__(self, st_period, periods):
         """
-        st_period = start of period
-        end_period = end of period
+        st_period = start of cycle
+        end_period = end of end of cycle
         """
         assert type(st_period) == datetime, "st_period has to be a date/datetime object"
         self.final_sched = {}
@@ -518,11 +548,12 @@ def make_schedule(kind = 'cook'):
     """Makes schedules
     kind = 'cook' or 'kitchen_help'
     """
-    url = ''
+    url = 'https://docs.google.com/spreadsheets/d/1iBv2cj6u1MH_8'+\
+    'JSvEfN-aJpTveyhkkgsNrLrgj1I3_U/edit#gid=1261624705'
     ss = SpreadSheet() #Instantiate a spreadsheet object
     ss.get_data(url)   # download data from the google sheet
     ss.create_record() # Create a record
-    start = datetime(2017,6,5)
+    start = datetime(2017,6,23)
     periods = 19
     # end = datetime(2017,2,20)
     scheduler= Scheduler(start, periods)  #instantiate a scheduler
