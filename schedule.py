@@ -8,6 +8,18 @@ import numpy as np
 import re
 from collections import namedtuple
 from time import sleep
+
+
+#--------order of priority----------------
+#1. Folks who are going to be more than half the length of the cycle are omitted from scheduling
+#2. People who are likely to be unavailable at some point in the cyle are scheduled first
+#3. People who prefer not to work within the weekdays are next
+#4. Rest follows
+#5. Finally anyone who couldn't a spot per requirement for various reasons, one
+# such as all spots taken are randomly assigned to the available spots
+
+
+
 #Data -----------------------------------------------------------------
 months_long = ["january",
                "february",
@@ -68,13 +80,13 @@ day_to_num= {
 }
 
 num_to_day = {
-    0:  "Monday",
-    1: "Tuesday",
-    2:  "Wednesday",
-    3:  "Thursday",
-    4: "Friday",
-    5: "Saturday",
-    6: "Sunday"
+    0:  "monday",
+    1: "tuesday",
+    2:  "wednesday",
+    3:  "thursday",
+    4: "friday",
+    5: "saturday",
+    6: "sunday"
 }
 
 
@@ -92,16 +104,6 @@ class Scheduler:
     st_period:  The date for the start of a new cycle
     periods:     How many days in  the cycle
     """
-    _daysofweek= {
-    0: "monday",
-    1: "tuesday",
-    2: "wednesday",
-    3: "thursday",
-    4: "friday",
-    5: "saturday",
-    6: "sunday"
-    }
-
 
     def __init__(self, st_period, periods):
         """
@@ -115,7 +117,7 @@ class Scheduler:
         self.periods = periods
         self.dates = pd.date_range(self.start, periods = self.periods, freq = "D").date
         self.dates = list(self.dates)
-    def schedule(self, spreadsheet, sch_type = 'cook'):
+    def schedule(self, spreadsheet, sch_type = 'cook', print_diagnose = True):
 
         """
         SpreadSheet object or spreadsheet-like object that contains
@@ -134,9 +136,9 @@ class Scheduler:
         # removing people who may not be available during schedule period
         absent_names = []
         for name in spreadsheet.record:
-            absent_dates = [dat for dat in\
-             spreadsheet.record[name]['away'] if dat in self.dates]  #use intersection operation
-            if len(absent_dates) >= self.periods- 1:
+            absent_dates = {dat for dat in\
+             spreadsheet.record[name]['away'] if dat in self.dates}
+            if (len(absent_dates.intersection(self.dates)) >= self.periods/2 ):
                 self.dates.pop()
                 absent_names.append(name)
 
@@ -150,58 +152,121 @@ class Scheduler:
         # sleep(10)
 
         ##### sorting list to have people not available first#############
-        not_available = []
-        available = []
-        for name in spreadsheet.record:
-            away = set(spreadsheet.record[name]['away'])
-            if len(away.intersection(self.dates)) != 0:
-                not_available.append(name)
-            else:
-                available.append(name)
-        names = not_available + available
-        print("May be out during schedule period: ", not_available)
+
+        def _sort_names(spreadsheet, sch_type = 'cook'):
+            may_not_be_available = []
+            available = []
+            mon_fri = []
+            for name in spreadsheet.record:
+                away = set(spreadsheet.record[name]['away'])
+                if len(away.intersection(self.dates)) != 0:
+                    may_not_be_available.append(name)
+
+                elif (spreadsheet.record[name]['preferred'] == [
+                'monday', 'tuesday', 'wednesday', 'thursday', 'friday'
+                ]) and sch_type == 'cook' :
+                    mon_fri.append(name)
+
+                elif (spreadsheet.record[name]['preferred_kh'] == [
+                'monday', 'tuesday', 'wednesday', 'thursday', 'friday'
+                ]) and sch_type == 'kitchen_help':
+                    mon_fri.append(name)
+                else:
+                    available.append(name)
+            names = may_not_be_available + mon_fri + available
+
+            return may_not_be_available, names, mon_fri
+
+        # priority number 2: sort names
+        if sch_type == 'cook':
+            may_not_be_available, names, mon_fri = _sort_names(spreadsheet, 'cook')
+        else:
+            may_not_be_available, names, mon_fri = _sort_names(spreadsheet, 'kitchen_help')
+
+        print(sch_type, names)
+        print('Cannot have a spot from Mon-Fri: ', mon_fri)
+        print("May be out during schedule period: ", may_not_be_available)
 
 
         # final schedule database
         self.final_sched = dict(zip(self.dates,['' for i in range(len(self.dates))]))
 
+### Main logic for scheduling
 
-        for date in self.dates:
-            #Checking for availability of spot--------------
-            try:
-                if len(self.final_sched[date]) != 0:
-                    print("checking for availability...")
+        for person in names:
 
-                    raise SpotTaken("Sorry spot is taken")
-            except SpotTaken:
-                continue
+            for date in self.dates:
+                #Checking for availability of spot--------------
+                try:
+                    if len(self.final_sched[date]) != 0:
+                        print("checking for availability...")
 
-            #np.random.shuffle(names)
-            for person in names:
-                #np.random.shuffle(names)   #shuffle names
-                print("checking date {0} against {1}".format(date,person))
+                        raise SpotTaken("Sorry spot is taken")
+                except SpotTaken:
+                    print('Spot taken...checking next date in line...')
+                    continue
+
+                print("checking {0} for {1}, a {2}, cook: {3}, kh: {4}".format(person, date, num_to_day[date.weekday()],\
+                spreadsheet.record[person]['preferred'],spreadsheet.record[person]['preferred_kh']))
 
                 if sch_type == 'cook':
-                    is_pref = spreadsheet.is_pref(person, self._daysofweek[date.weekday()])
+                    print("LOOK HERE: {0}".format(num_to_day[date.weekday()]))
+                    is_pref = spreadsheet.is_pref(person, num_to_day[date.weekday()])
+
+                    no_day_requirement = (date.weekday() in [5,6]) and \
+                    len(spreadsheet.record[person]['preferred']) == 0
+
+                    no_weekend_pref = (date.weekday() in [5,6]) and not \
+                     (spreadsheet.record[person]['preferred'] == [
+                    'monday', 'tuesday', 'wednesday', 'thursday', 'friday'
+                    ])
                 else:
                     print('number of busy_kh, ',len(spreadsheet.record[person]['preferred_kh']) )
+                    #Using cooking information if the person doesn't have preferred kitchen help days
                     if len(spreadsheet.record[person]['preferred_kh']) == 0:
-                        is_pref = spreadsheet.is_pref(person, self._daysofweek[date.weekday()])
+                        is_pref = spreadsheet.is_pref(person, num_to_day[date.weekday()])
                     else:
-                        is_pref = spreadsheet.is_pref_kh(person, self._daysofweek[date.weekday()])
+                        is_pref = spreadsheet.is_pref_kh(person, num_to_day[date.weekday()])
+
+                    no_day_requirement = (date.weekday() in [5,6]) and \
+                    len(spreadsheet.record[person]['preferred_kh']) == 0
+
+                    no_weekend_pref = (date.weekday() in [5,6]) and not \
+                    (spreadsheet.record[person]['preferred_kh'] == [
+                    'monday', 'tuesday', 'wednesday', 'thursday', 'friday'
+                    ])
+
 
                 print(person," availabilty: {}".format( not (spreadsheet.is_away(person, date) or is_pref)))
 
-                if spreadsheet.is_away(person, date) or is_pref :
+
+                if spreadsheet.is_away(person, date) or is_pref:
+                    continue
+                #making sure people without any day requirement don't get a weekend
+                elif no_day_requirement:
+                    continue
+                elif no_weekend_pref:
                     continue
 
+                # Finally schedule a person
                 if person not in self.final_sched.values():
                     self.final_sched[date] = person
                     self._scheduled.add(person)
                     print(person,' is scheduled')
+
+                    #print diagnoses
+                    if print_diagnose:
+                        out = 'date \t\t name \n'
+                        for date, name in self.final_sched.items():
+                            temp = '{0}\t\t{1}\n'.format(date, name)
+                            out = out + temp
+                        print(out)
+                        # sleep(2)
                     break
                 else:
                     continue
+
+
 
 
 
@@ -244,15 +309,6 @@ class SpreadSheet:
     This is an object that contains record of names with their corresponding
     away dates and preferred days
     """
-    _daysofweek= {
-    0: "monday",
-    1: "tuesday",
-    2: "wednesday",
-    3: "thursday",
-    4: "friday",
-    5: "saturday",
-    6: "sunday"
-    }
 
     def __init__(self):
         self._record = {}
@@ -344,7 +400,7 @@ class SpreadSheet:
                 if 3<=len(day)<=5:
                     days[i] = days_map[day]
                 else:
-                    pass
+                    pass          #catch all else: change it
             return days
 
     def parse_month(self,month):
@@ -385,9 +441,9 @@ class SpreadSheet:
 
         for i in range(n):
             name, fr, to, busy_day, busy_kh = ndata.iloc[i,].values
-            if 'week' in busy_day.lower():   # parse sentence containing 'weekday'
+            if 'all' in busy_day.lower():   # parse sentence containing 'weekday'
                 busy_day = 'mon-fri'
-            if 'week' in busy_kh.lower():
+            if 'all' in busy_kh.lower():
                 busy_kh = 'mon-fri'
             yield self.Observation(name, fr, to, busy_day, busy_kh)
 
@@ -396,7 +452,7 @@ class SpreadSheet:
          etc and return a list of parse days
         """
         if ',' in days and 'and' not in days:
-            busy_day = days.split(',')
+            busy_day = [x.strip() for x in days.split(',')]
             return self.parse_days(busy_day)
 
         elif '-' in days:
@@ -405,11 +461,13 @@ class SpreadSheet:
             return self.expand_day(busy_day[0],busy_day[1])
 
         elif "and" in days and ',' in days:
+            busy_day = [x if 'and' not in x else x.split('and') for x in days.split(',')]
             out = []
-            busy_day = days.split(",")
-            busy_day = [x.split('and') for x in busy_day]
-            for ls in busy_day:
-                out.extend(ls)
+            for day in busy_day:
+                if isinstance(day, str):
+                    out.append(day.strip())
+                else:
+                    out.extend([x.strip() for x in day])
             busy_day = out
             return self.parse_days(busy_day)
 
@@ -419,34 +477,42 @@ class SpreadSheet:
     def parse_observation(self, obs = ''):
 
         year = datetime.now().year
-        mpat = r'[\d]+'
+        day_pat = r'[\d]+'
         monthpat = r'[A-Za-z]+'
-        mpat = re.compile(mpat)
+        day_pat = re.compile(day_pat)
         monthpat = re.compile(monthpat)
 
-        # try to extract month  and day from string
-        try:
-            mday_from = mpat.search(obs.From).group()
-            month_from = monthpat.search(obs.From).group()
-            mday_to = mpat.search(obs.To).group()
-            month_to = monthpat.search(obs.To).group()
-        except AttributeError:
-            mday_from = ''
-            month_from = ""
-            mday_to = ''
-            month_to = ''
+        if '/' in obs.From or '-' in obs.From:
+            month_from, day_from, year_from = list(map(int,day_pat.findall(obs.From)))
+            month_to, day_to, year_to = list(map(int,day_pat.findall(obs.To)))
+            From = datetime(year_from, month_from, day_from)
+            To = datetime(year_to, month_to, day_to)
+        else:
+            # try to extract month  and day from string
+            try:
+                mday_from = day_pat.search(obs.From).group()
+                month_from = monthpat.search(obs.From).group()
+                mday_to = day_pat.search(obs.To).group()
+                month_to = monthpat.search(obs.To).group()
+            except AttributeError:
+                mday_from = ''
+                month_from = ""
+                mday_to = ''
+                month_to = ''
+
+            if mday_from != '':
+                From = datetime(year, self.parse_month(month_from),int(mday_from))
+                To = datetime(year, self.parse_month(month_to), int(mday_to))
+            else:
+                From = ''
+                To = ''
+
         #creating a list of days
         busy_day = self.parse_list_days(obs.Busy_day)
         busy_kh = self.parse_list_days(obs.Busy_kh)
 
         #parsing the dates to datetime objects
         Name = obs.Name
-        if mday_from != '':
-            From = datetime(year, self.parse_month(month_from),int(mday_from))
-            To = datetime(year, self.parse_month(month_to), int(mday_to))
-        else:
-            From = ''
-            To = ''
 
         return self.Observation(Name, From, To, busy_day, busy_kh)
 
@@ -553,11 +619,12 @@ def make_schedule(kind = 'cook'):
     ss = SpreadSheet() #Instantiate a spreadsheet object
     ss.get_data(url)   # download data from the google sheet
     ss.create_record() # Create a record
-    start = datetime(2017,6,23)
-    periods = 19
+    start = datetime(2017,7,23)
+
+    periods = 17
     # end = datetime(2017,2,20)
     scheduler= Scheduler(start, periods)  #instantiate a scheduler
-    scheduler.schedule(ss, sch_type = kind)     # make a schedule for cooks
+    scheduler.schedule(ss, sch_type = kind, print_diagnose = True)     # make a schedule for cooks
     return scheduler.table
 
 def main():
